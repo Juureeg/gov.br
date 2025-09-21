@@ -1,0 +1,73 @@
+name: iOS Build & Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ios-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT: Gov.xcodeproj        # change to Gov.xcworkspace if you use CocoaPods
+  SCHEME: Gov                   # <-- set your scheme name here
+  CONFIGURATION: Debug          # or Release
+  DESTINATION: "platform=iOS Simulator,name=iPhone 15,OS=latest"
+
+jobs:
+  build-and-test:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: apple-actions/setup-xcode@v3
+        with:
+          xcode-version: "15.4"   # adjust if your project needs a different Xcode
+
+      - name: Show toolchain & project info (debug aid)
+        run: |
+          xcodebuild -version
+          xcodebuild -list -project "$PROJECT" || true
+          xcrun simctl list runtimes
+          xcrun simctl list devices
+
+      - name: Cache DerivedData & SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Developer/Xcode/DerivedData
+            ~/.swiftpm
+          key: xcode-${{ runner.os }}-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            xcode-${{ runner.os }}-
+
+      - name: Install xcpretty (for nicer logs)
+        run: sudo gem install xcpretty --no-document
+
+      - name: Build & Test (iOS Simulator)
+        run: |
+          set -euo pipefail
+          # If using a workspace, replace -project with: -workspace "$PROJECT"
+          xcodebuild \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration "$CONFIGURATION" \
+            -sdk iphonesimulator \
+            -destination '$DESTINATION' \
+            -enableCodeCoverage YES \
+            clean test | xcpretty && exit ${PIPESTATUS[0]}
+
+      # Always upload logs if something goes wrong
+      - name: Upload DerivedData (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DerivedData
+          path: |
+            ~/Library/Developer/Xcode/DerivedData
+          retention-days: 5
